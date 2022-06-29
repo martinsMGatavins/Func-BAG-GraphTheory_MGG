@@ -3,12 +3,13 @@
 """
 Created on Wed Jun 22 12:01:18 2022
 Gradient tree boosting for brain age prediction using nested CV with 
-grid search (10 x 10 folds)
+grid search (5 outer x 10 inner folds)
+
+# Argument 1: name of output directory ("outputs/${outputdir}")
+# Argument 2: name of input csv file ("data/${csv filename}")
 
 @author: martinsmarksgatavins
 """
-# Argument 1: name of output directory ("outputs/${outputdir}")
-# Argument 2: name of input csv file ("data/${csv filename}")
 
 #%% Package import
 import pandas as pd
@@ -25,22 +26,22 @@ import joblib
 outputdir = sys.argv[1]
 data = pd.read_csv(sys.argv[2])
 varnames = data.drop(columns=["sub","age"],axis=1).columns.values
-labels = data[["sub","age"]]
+y = data[["sub","age"]].to_numpy()
 X = data.drop(columns=["sub","age"],axis=1).to_numpy()
-y = labels.drop(columns=["sub"],axis=1).to_numpy().ravel() # CHANGE HERE?
 
-#%% Main test_train_split (picking a random_state) & setting up CV
-X_train, X_test, y_train, y_test = train_test_split(X,y,test_size=0.33,random_state=21)
-# get test_split indices (1 - indices OR 2 - have y be the (N,2) with subject + id)
+#%% Main test_train_split & setting up CV
+X_train, X_test, label_train, label_test = train_test_split(X,y,test_size=0.33,random_state=21)
+y_train = label_train["age"].to_numpy().ravel()
+y_test = label_test["age"].to_numpy().ravel()
+id_train = label_train["sub"].to_numpy().ravel()
+id_test = label_test["sub"].to_numpy().ravel()
 
-outer_kf = KFold(n_splits=7,shuffle=True,random_state=21)
-inner_kf = KFold(n_splits=7,shuffle=True,random_state=21)
+outer_kf = KFold(n_splits=5,shuffle=True)
+inner_kf = KFold(n_splits=10,shuffle=True)
 
 #%% Setting up parameters to test (incomplete) for GridSearchCV
-parameters = {"n_estimators":[10,20,50],
-              "max_depth":[10,20,50],
-              "min_samples_split":[2,4,6],
-              "n_iter_no_change":[None,3,5]}
+parameters = {"n_estimators":np.linspace(50,400,36),
+              "max_depth":np.linspace(2,50,25)}
 gtb = GradientBoostingRegressor()
 
 #%% Training using nested cross-validation + model analysis
@@ -49,17 +50,20 @@ gtb = GradientBoostingRegressor()
 modelTrain = GridSearchCV(estimator=gtb,param_grid=parameters,
                           n_jobs=-1,cv=inner_kf)
 # Outer loop: 7-fold cross-validation
-scores = cross_val_score(modelTrain,X=X_train,
-                         y=y_train,cv=outer_kf)
+scores = cross_val_score(modelTrain,X=X_train,y=y_train,
+                         cv=outer_kf,n_jobs=-1)
 
 modelTrain.fit(X_train,y_train)
 y_pred = modelTrain.predict(X_test)
 
 gtb_best = modelTrain.best_estimator_
+params = gtb_best.get_params()
 # Error analysis
 modelErrors= {'MSE':[mean_squared_error(y_test,y_pred)],
               'MAE':[mean_absolute_error(y_test,y_pred)],
-              'R2 score':[gtb_best.score(X_test,y_test)]}
+              'R2 score':[gtb_best.score(X_test,y_test)],
+              'Num_estimators':[params['n_estimators']],
+              'Tree_depth':[params['max_depth']]}
 
 # Feature importance analysis (on test)
 impurity= gtb_best.feature_importances_
@@ -73,8 +77,7 @@ shap_interaction = explainer.shap_interaction_values(X_test)
 mean_interactions = np.mean(shap_interaction,axis=0)
 
 #%% Table with pred & chronological age + performance reports
-results = [y_pred, y_test] 
-ba_ca_results = pd.DataFrame(results,columns=["pred_age","real_age"])
+ba_ca_results = pd.DataFrame({'sub':id_test,'pred_age':y_pred,'real_age':y_test})
 ba_ca_results.to_csv(outputdir + "/GTB_brainage_results.csv")
 
 # MSE, MAE, R2
@@ -95,4 +98,3 @@ pd.DataFrame(mean_interactions).to_csv(outputdir +
 # Save best-fit GTB model
 joblib.dump(gtb_best,outputdir + "/GTB_brainage.sav")
         
-    
