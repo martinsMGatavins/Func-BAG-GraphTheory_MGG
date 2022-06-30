@@ -26,7 +26,7 @@ import joblib
 outputdir = sys.argv[1]
 data = pd.read_csv(sys.argv[2])
 varnames = data.drop(columns=["sub","age"],axis=1).columns.values
-y = data[["sub","age"]].to_numpy()
+y = data[["sub","age"]]
 X = data.drop(columns=["sub","age"],axis=1).to_numpy()
 
 #%% Main test_train_split & setting up CV
@@ -40,8 +40,8 @@ outer_kf = KFold(n_splits=5,shuffle=True)
 inner_kf = KFold(n_splits=10,shuffle=True)
 
 #%% Setting up parameters to test (incomplete) for GridSearchCV
-parameters = {"n_estimators":np.linspace(50,400,36),
-              "max_depth":np.linspace(2,50,25)}
+parameters = {"n_estimators":np.linspace(50,400,36).astype('int'),
+              "max_depth":np.linspace(2,50,25).astype('int')}
 gtb = GradientBoostingRegressor()
 
 #%% Training using nested cross-validation + model analysis
