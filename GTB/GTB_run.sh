@@ -24,7 +24,7 @@ mkdir ${projectdir}/outputs/${category}
 outputdir=${projectdir}/outputs/${category}
 
 module load python
-python GTB_firstround_versionA.py \
+python GTB_nested.py \
   "${inputdir}/${SUB}_train.csv" \
   "${inputdir}/${SUB}_test.csv" \
   "${category}"
