@@ -1,8 +1,7 @@
 #!/bin/bash
 
 declare -a ARRAY=("alff" "reho" "intrafc" "interfc"
-                  "eff" "part" "clust" "bc" "str"
-                  "part_raw" "clust_raw")
+                  "eff" "part" "clust" "bc" "str")
 
 projectdir=/home/gatavins/brain_age
 masteroutputdir=${projectdir}/outputs/10folds
@@ -82,5 +81,4 @@ done
 echo "Done with ${SUB}"
 done
 
-rm -r -f ${tempdir}
 exit 0
