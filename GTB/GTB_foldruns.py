@@ -36,9 +36,11 @@ test_ids = test['sub'].to_numpy().ravel()
 outer_kf = KFold(n_splits=5,shuffle=True,random_state=20)
 inner_kf = KFold(n_splits=10,shuffle=True,random_state=20)
 
-#%% Setting up parameters to test (incomplete) for GridSearchCV
-parameters = {"n_estimators":[25, 50, 75, 100, 200, 300, 400, 500],
-               "max_depth":[3, 4, 5, 6, 7, 8]}
+#%% Setting up parameters to test for GridSearchCV
+parameters = {"n_estimators":[100, 250, 500, 1000],
+               "eta":[0.01, 0.025, 0.05, 0.1],
+               "max_depth":[4, 6, 8, 10, 15],
+               "subsample":[0.25, 0.5, 0.75, 1]}
 
 gtb = GradientBoostingRegressor()
 

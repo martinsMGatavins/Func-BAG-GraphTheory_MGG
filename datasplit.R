@@ -2,7 +2,7 @@ invisible(lapply(c("stringi","stringr","tidyr","dplyr","tidyverse","anticlust"),
 ROOT <- "~/Desktop/BIDS_WUSTL_2022/second_set"
 TEMP <- paste0(ROOT,"/train_test_sets")
 graphCSV <- read.csv(paste0(ROOT,"/data/graph25perc-fcon_888x2334_20220721.csv"))
-graphCSV <- graphCSV %>% filter(strength1 != 0) %>% rename(sub = sub_method) # removes subjects with dysconnected graphs
+graphCSV <- graphCSV %>% filter(strength1 != 0) %>% rename(sub = sub_method) # removes subjects with disconnected graphs
 rehoCSV <- read.csv(paste0(ROOT,"/data/func_reho-1644x333_20220718.csv"))
 alffCSV <- read.csv(paste0(ROOT,"/data/func_alff-1635x333_20220718.csv"))
 masterCSV <- read.csv(paste0(ROOT,"/data/master_889x20_20220720.csv"))
