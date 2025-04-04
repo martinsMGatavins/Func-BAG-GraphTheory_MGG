@@ -3,9 +3,38 @@ import numpy as np
 import networkx as nx
 import bct
 import time
-import multiprocessing
-from joblib import Parallel, delayed
+import os
 
+#%% Set home dir
+os.chdir("..")
+
+# Read functional connectivity data
+fc_list = pd.read_csv("data/hcp_d/func_fcon-parc-888x55278_filtered.csv")
+
+# Read Gordon333 community partition vector
+gordon333_array = np.loadtxt("data/gordon333CommunityAffiliation.1D")
+community_partition = np.squeeze(gordon333_array)
+num_nodes = len(community_partition)
+num_networks = len(np.unique(community_partition))
+
+# Initialize lists to store nodewise results
+participation_coef = np.empty((0,num_nodes+1))
+clustering_coef = np.empty((0,num_nodes+1))
+network_fc = np.empty((0,int((num_networks*(num_networks-1)/2)+num_networks+1)))
+within_network_fc = np.empty((0,num_nodes+1))
+between_network_fc = np.empty((0,num_nodes+1))
+avg_edge_weight = np.empty((0,2))
+
+participation_coef_nn = np.empty((0,num_nodes+1))
+clustering_coef_nn = np.empty((0,num_nodes+1))
+network_fc_nn = np.empty((0,int((num_networks*(num_networks-1)/2)+num_networks+1)))
+within_network_fc_nn = np.empty((0,num_nodes+1))
+between_network_fc_nn = np.empty((0,num_nodes+1))
+betweenness_nn = np.empty((0,num_nodes+1))
+efficiency_nn = np.empty((0,num_nodes+1))
+avg_edge_weight_nn = np.empty((0,2))
+
+print("initialized")
 #%%
 
 def generate_community_edge_weight_matrix(graph_matrix, community_assignment):
@@ -66,9 +95,11 @@ def mean_edge_weight(adjacency_matrix, community_assignment):
 
     return within_community_weights, outside_community_weights
 
+fc_list_red = fc_list.head(1)
+
 #%%
 # Iterate through the dataframe
-def loop_iter(row):
+for index, row in fc_list_red.iterrows():
     start_time = time.time()
     sub_id = row.iloc[1] # Select subject id
     edge_weights_flat = np.array(row.iloc[2:])  # Exclude the first column (subject_id)
@@ -87,25 +118,32 @@ def loop_iter(row):
 
     # Calculate average non-zero edge weight
     mean_non_zero_weight = np.mean(edge_weights_z[np.nonzero(edge_weights_z)])
-    output = [sub_id,mean_non_zero_weight]
+    avg_edge_weight = np.vstack((avg_edge_weight,[sub_id,mean_non_zero_weight]))
     
     # Calculate participation coefficient
     positive_pc, negative_pc = bct.participation_coef_sign(edge_weights_z, community_partition)
     avg_pc = (positive_pc + negative_pc) / 2
-    output = np.hstack((output,avg_pc))
+    avg_pc = np.append(sub_id,avg_pc)
+    participation_coef = np.vstack((participation_coef,avg_pc))
     
     # Calculate clustering coefficient - calculate using graphblas version of clustering
-    cc = bct.clustering_coef_wu_sign(edge_weights_z,coef_type="constantini")
-    output = np.hstack((output,cc))
+    cc = bct.clustering_coef_wu_sign(edge_weights_z,coef_type="costantini")
+    cc = np.append(sub_id,cc)
+    clustering_coef = np.vstack((clustering_coef,cc))
 
     # Calculate within-community and between-community average nodewise edge weights
     within_community_edge_weight, between_community_edge_weight = mean_edge_weight(edge_weights_z, community_partition)
-    output = np.hstack((output,within_community_edge_weight))
-    output = np.hstack((output,between_community_edge_weight))
+    
+    within_community_edge_weight = np.append(sub_id,within_community_edge_weight)
+    within_network_fc = np.vstack((within_network_fc,within_community_edge_weight))
+
+    between_community_edge_weight = np.append(sub_id,between_community_edge_weight)
+    between_network_fc = np.vstack((between_network_fc,between_community_edge_weight))
     
     # Calculate network-to-network connectivity
     network_fcon = generate_community_edge_weight_matrix(edge_weights_z, community_partition)
-    output = np.hstack((output,network_fcon))
+    network_fcon = np.append(sub_id,network_fcon)
+    network_fc = np.vstack((network_fc,network_fcon))
 
     edge_weights_z_nn = edge_weights_z
     edge_weights_z_nn[edge_weights_z_nn < 0] = 0
@@ -113,28 +151,33 @@ def loop_iter(row):
     # Load NetworkX representation of graph
     G = nx.from_numpy_array(edge_weights_z_nn)
     
-    output_nn = []
     # Checks if non-negative adjacency matrix have more than one zero eigenvalue
     if nx.is_connected(G) == False:
-        return output, output_nn # Skips non-negative graph calculations if disconnected
+        continue # Skips non-negative graph if disconnected
 
     mean_non_zero_weight = np.mean(edge_weights_z_nn[np.nonzero(edge_weights_z_nn)])
-    output_nn = [sub_id,mean_non_zero_weight]
+    avg_edge_weight_nn = np.vstack((avg_edge_weight_nn,[sub_id,mean_non_zero_weight]))
     
-    output_nn = np.hstack((output_nn,positive_pc))
+    positive_pc = np.append(sub_id,positive_pc)
+    participation_coef_nn = np.vstack((participation_coef_nn,positive_pc))
     
     cc_nn = bct.clustering_coef_wu(edge_weights_z_nn)
-    output_nn = np.hstack((output_nn,cc_nn))
+    cc_nn = np.append(sub_id,cc_nn)
+    clustering_coef_nn = np.vstack((clustering_coef_nn,cc_nn))
 
     within_community_edge_weight, between_community_edge_weight = mean_edge_weight(edge_weights_z_nn, community_partition)
     
-    output_nn = np.hstack((output_nn,within_community_edge_weight))
-    output_nn = np.hstack((output_nn,between_community_edge_weight))
+    within_community_edge_weight = np.append(sub_id,within_community_edge_weight)
+    within_network_fc_nn = np.vstack((within_network_fc_nn,within_community_edge_weight))
+
+    between_community_edge_weight = np.append(sub_id,between_community_edge_weight)
+    between_network_fc_nn = np.vstack((between_network_fc_nn,between_community_edge_weight))
 
     # Calculate betweenness centrality
     betweenness = nx.betweenness_centrality(G,normalized=True)
     betweenness_values = np.array(list(betweenness.values()))
-    output_nn = np.hstack((output_nn,betweenness_values))
+    betweenness_values = np.append(sub_id,betweenness_values)
+    betweenness_nn = np.vstack((betweenness_nn,betweenness_values))
 
     # Calculate nodal efficiency (inverse of average shortest path length)
     average_shortest_path_lengths = []
@@ -143,56 +186,72 @@ def loop_iter(row):
         average_shortest_path_length = sum(shortest_path_lengths.values()) / (len(G.nodes) - 1)
         average_shortest_path_lengths.append(average_shortest_path_length)
     efficiencies = 1 / np.array(average_shortest_path_lengths)
-    output_nn = np.hstack((output_nn,efficiencies))
+    efficiencies = np.append(sub_id,efficiencies)
+    efficiency_nn = np.vstack((efficiency_nn,efficiencies))
 
     # Calculate non-negative network-to-network FC
     network_fcon_nn = generate_community_edge_weight_matrix(edge_weights_z, community_partition)
-    output_nn = np.hstack((output_nn,network_fcon_nn))
+    network_fcon_nn = np.append(sub_id,network_fcon_nn)
+    network_fc = np.vstack((network_fc,network_fcon_nn))
 
     end_time = time.time()  # Record the end time
     iteration_time = end_time - start_time
     print("Iteration took", iteration_time, "seconds")
-    return output, output_nn
 #%%
-if __name__ == "__main__":
 
-    # Read functional connectivity data
-    fc_list = pd.read_csv("../data/hcp_d/func_fcon-parc-888x55278_filtered.csv")
+# Load all of the tables with appropriately named columns as data frames
+M = len(community_partition)
+C = len(np.unique(community_partition))
 
-    # Read Gordon333 community partition vector
-    gordon333_array = np.loadtxt("../data/gordon333CommunityAffiliation.1D")
-    community_partition = np.squeeze(gordon333_array)
-    num_nodes = len(community_partition)
-    num_networks = len(np.unique(community_partition))
-    fc_list_red = fc_list.head(2)
-    num_cores = multiprocessing.cpu_count()
-    results = Parallel(n_jobs=num_cores)(delayed(loop_iter)(row) for _, row in fc_list_red.iterrows())
-    sign_array = np.vstack([k[0] for k in results])
-    nn_array = np.vstack([k[1] for k in results])
-    M = len(community_partition)
-    C = len(np.unique(community_partition))
+# Participation coefficient
+pc_cols = ["sub_id"] + [f"pcoef_{i}" for i in range(1, M + 1)]
+participation_coef = pd.DataFrame(participation_coef, columns=pc_cols)
+participation_coef.to_csv("data/brain/participation_coef.csv",index=False)
 
-    # Participation coefficient
-    pc_cols = [f"pcoef_{i}" for i in range(1, M + 1)]
-    # Clustering coefficient
-    cc_cols = [f"clust_{i}" for i in range(1, M + 1)]
-    # Network-to-network FC
-    network_fc_cols = [f"fc_{i}_{j}" for i in range(1, C+1) for j in range(i, C+1)]
-    # Within-network FC by node
-    wfc_cols = [f"within_{i}" for i in range(1, M + 1)]
-    # Between-network FC by node
-    bfc_cols = [f"between_{i}" for i in range(1, M + 1)]
-    # Betweenness centrality
-    btc_cols = [f"bcentr_{i}" for i in range(1, M + 1)]
-    # Node-wise efficiency
-    eff_cols = [f"eff_{i}" for i in range(1, M + 1)]
+participation_coef_nn = pd.DataFrame(participation_coef_nn, columns=pc_cols)
+participation_coef_nn.to_csv("data/brain/participation_coef_nn.csv",index=False)
 
-    sign_cols = ["sub_id","avg_weight"] + pc_cols + cc_cols + wfc_cols + bfc_cols + network_fc_cols
-    sign_df = pd.DataFrame(sign_array,columns=sign_cols)
-    sign_df.to_csv("../data/brain/signed_graph_measures.csv",index=False)
+# Clustering coefficient
+cc_cols = ["sub_id"] + [f"clust_{i}" for i in range(1, M + 1)]
+clustering_coef = pd.DataFrame(clustering_coef, columns=cc_cols)
+clustering_coef.to_csv("data/brain/clustering_coef.csv",index=False)
 
-    nn_cols = ["sub_id","avg_weight"] + pc_cols + cc_cols + network_fc_cols + wfc_cols + bfc_cols + btc_cols + eff_cols
-    nn_df = pd.DataFrame(nn_array,columns=nn_cols)
-    nn_df.to_csv("../data/brain/nn_graph_measures.csv",index=False)
+clustering_coef_nn = pd.DataFrame(clustering_coef_nn, columns=cc_cols)
+clustering_coef_nn.to_csv("data/brain/clustering_coef_nn.csv",index=False)
+
+# Network-to-network FC
+network_fc_cols = ["sub_id"] + [f"fc_{i}_{j}" for i in range(1, C + 1) for j in range(i, C + 1)]
+network_fc = pd.DataFrame(network_fc, columns=network_fc_cols)
+network_fc.to_csv("data/brain/network_fc.csv",index=False)
+
+network_fc_nn = pd.DataFrame(network_fc_nn, columns=network_fc_cols)
+network_fc_nn.to_csv("data/brain/network_fc_nn.csv",index=False)
+
+# Within-network FC by node
+wfc_cols = ["sub_id"] + [f"within_{i}" for i in range(1, M + 1)]
+within_network_fc = pd.DataFrame(within_network_fc, columns=wfc_cols)
+within_network_fc.to_csv("data/brain/within_network_fc.csv",index=False)
+
+within_network_fc_nn = pd.DataFrame(within_network_fc_nn, columns=wfc_cols)
+within_network_fc_nn.to_csv("data/brain/within_network_fc_nn.csv",index=False)
+
+# Between-network FC by node
+bfc_cols = ["sub_id"] + [f"between_{i}" for i in range(1, M + 1)]
+between_network_fc = pd.DataFrame(between_network_fc, columns=bfc_cols)
+between_network_fc.to_csv("data/brain/between_network_fc.csv",index=False)
+
+between_network_fc_nn = pd.DataFrame(between_network_fc_nn, columns=bfc_cols)
+between_network_fc_nn.to_csv("data/brain/between_network_fc_nn.csv",index=False)
+
+# Betweenness centrality
+btc_cols = ["sub_id"] + [f"bcentr_{i}" for i in range(1, M + 1)]
+betweenness_nn = pd.DataFrame(betweenness_nn, columns=btc_cols)
+betweenness_nn.to_csv("data/brain/betweenness_nn.csv",index=False)
+
+# Node-wise efficiency
+eff_cols = ["sub_id"] + [f"eff_{i}" for i in range(1, M + 1)]
+efficiency_nn = pd.DataFrame(efficiency_nn, columns=eff_cols)
+efficiency_nn.to_csv("data/brain/efficiency_nn.csv",index=False)
+
 
 # %%

@@ -61,10 +61,10 @@ def concatenate(X, covariates, train_idx, test_idx):
 
     return X_train_concat, X_test_concat
 
-def hyperparam_search(data):
+def crossval_run(fold, data):
     X, y, covars, train_idx, test_idx = data
-    X_train, _ = residualize(X,covars,train_idx,test_idx)
-    y_train, _ = y[train_idx],y[test_idx]
+    X_train, X_test = residualize(X,covars,train_idx,test_idx)
+    y_train, y_test = y[train_idx],y[test_idx]
     gtb_param_space = {
         'n_estimators':[5, 15, 25, 35, 50, 75, 100, 150, 200, 250, 300, 400, 550, 750, 1000],
         'learning_rate':[0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5, 0.6, 0.75, 1.0],
@@ -76,45 +76,51 @@ def hyperparam_search(data):
 
     # GridSearch for best parameter set
     gcv = GridSearchCV(xgb.XGBRegressor(),param_grid=gtb_param_space,cv=kf,n_jobs=INNER_FOLDS)
-    gcv.fit(X,y)
-
-    gtb_params = gcv.best_params_
+    gcv.fit(X, y, refit=True)
+    fitted_gtb = gcv.best_estimator_
+    y_gtb = fitted_gtb.predict(X_test)
 
     X_train, _ = concatenate(X,covars,train_idx,test_idx)
     ecv = ElasticNetCV(cv=kf,n_jobs=INNER_FOLDS)
-    ecv.fit(X_train,y_train)
+    ecv.fit(X_train,y_train,refit=True)
+    y_elasticnet = ecv.predict(X_test)
 
-    en_params = {"alpha" : ecv.alpha_,
-                 "l1_ratio" : ecv.l1_ratio_}
+    output = pd.DataFrame({"fold":fold,
+                           "y_actual":y_test,
+                           "y_gtb":y_gtb,
+                           "y_elastic":y_elasticnet})
+    gtb_params = pd.DataFrame(gcv.best_params_)
+    en_params = pd.DataFrame({"L1":ecv.l1_ratio_,
+                              "alpha":ecv.alpha_})
 
-    return gtb_params, en_params
+    return output, gtb_params, en_params, fitted_gtb, ecv
 
-def cross_val_run(data):
-    X, y, covars, kf, gtb_params, en_params = data
-    model_gtb_mae_fold = []
-    model_en_negmse_fold = []
-    trained_gtb_models = []
-    trained_en_models = []
-    gtb = xgb.XGBRegressor(n_estimators = gtb_params['n_estimators'],
-                           max_depth = 3,
-                           learning_rate = gtb_params["learning_rate"])
-    en = ElasticNet(alpha = en_params["alpha"],
-                    l1_ratio = en_params["l1_ratio"])
-    for train_idx, test_idx in kf.split(X,y):
-        X_train, X_test = residualize(X,covars,train_idx,test_idx)
-        y_train, y_test = y[train_idx],y[test_idx]
-        fit_model = gtb.fit(X_train,y_train)
-        trained_gtb_models.append(fit_model)
-        model_gtb_mae_fold.append(mean_absolute_error(y_test,fit_model.predict(X_test)))
+# def cross_val_run(data):
+#     X, y, covars, kf, gtb_params, en_params = data
+#     model_gtb_mae_fold = []
+#     model_en_negmse_fold = []
+#     trained_gtb_models = []
+#     trained_en_models = []
+#     gtb = xgb.XGBRegressor(n_estimators = gtb_params['n_estimators'],
+#                            max_depth = 3,
+#                            learning_rate = gtb_params["learning_rate"])
+#     en = ElasticNet(alpha = en_params["alpha"],
+#                     l1_ratio = en_params["l1_ratio"])
+#     for train_idx, test_idx in kf.split(X,y):
+#         X_train, X_test = residualize(X,covars,train_idx,test_idx)
+#         y_train, y_test = y[train_idx],y[test_idx]
+#         fit_model = gtb.fit(X_train,y_train)
+#         trained_gtb_models.append(fit_model)
+#         model_gtb_mae_fold.append(mean_absolute_error(y_test,fit_model.predict(X_test)))
 
-        X_train, X_test = concatenate(X,covars,train_idx,test_idx)
-        en.fit(X_train,y_train)
-        model_en_negmse_fold.append(-1*mean_squared_error(y_test,en.predict(X_test)))
+#         X_train, X_test = concatenate(X,covars,train_idx,test_idx)
+#         en.fit(X_train,y_train)
+#         model_en_negmse_fold.append(-1*mean_squared_error(y_test,en.predict(X_test)))
 
-    best_gtb = trained_gtb_models[min(range(len(model_gtb_mae_fold)), key=model_gtb_mae_fold.__getitem__)]
-    best_en = trained_en_models[max(range(len(model_en_negmse_fold)), key=model_en_negmse_fold.__getitem__)]
+#     best_gtb = trained_gtb_models[min(range(len(model_gtb_mae_fold)), key=model_gtb_mae_fold.__getitem__)]
+#     best_en = trained_en_models[max(range(len(model_en_negmse_fold)), key=model_en_negmse_fold.__getitem__)]
 
-    return best_gtb, best_en
+#     return best_gtb, best_en
     
 if __name__ == "__main__":
     
@@ -137,22 +143,25 @@ if __name__ == "__main__":
     X = features_df.drop(columns=["sub","mean_FD"])
     train_idx, val_idx = split_vector[split_vector==1], split_vector[split_vector==2]
 
-    X_train, y_train = X[train_idx], y[train_idx]
+    X_train, y_train, covariates_train = X[train_idx], y[train_idx], covariates[train_idx]
 
     # 5-fold CV (outer folds)
     kf = KFold(X_train,y_train,n_splits=OUTER_FOLDS,random_state=OUTER_SEED)
-    folds = [(X_train,y_train,covariates,i,j,INNER_SEED) for i,j in kf.split(X_train,y_train)]
+    folds = [(X_train,y_train,covariates,i,j) for i,j in kf.split(X_train,y_train)]
 
     # Grid-search Cross-validation (10-fold CV for each of the 5-fold CV folds)
-    best_parameters = joblib.Parallel(n_jobs=OUTER_FOLDS*INNER_FOLDS)(
-        joblib.delayed(hyperparam_search)(fold) for fold in folds
+    cross_val_outputs = joblib.Parallel(n_jobs=OUTER_FOLDS*INNER_FOLDS)(
+        joblib.delayed(crossval_run)(i, fold) for i, fold in enumerate(folds)
     )
     
-    outer_folds = [(X_train,y_train,covariates,kf,gtb_params,en_params) for gtb_params, en_params in best_parameters]
-    # CV of 5 different models from each GridSearchCV (5-fold CV)
-    best_models = joblib.Parallel(n_jobs=OUTER_FOLDS*OUTER_FOLDS)(
-        joblib.delayed(cross_val_run)(fold) for fold in outer_folds
-    )
+    predictions = pd.concat([res[0] for res in cross_val_outputs], ignore_index=True)
+    pred, gtb_params, en_params = (pd.concat(dfs, ignore_index=True) for dfs in zip(*cross_val_outputs[:3]))
+    gtb_list, en_list = zip(*cross_val_outputs[3:])
+    # outer_folds = [(X_train,y_train,covariates,kf,gtb_params,en_params) for gtb_params, en_params in best_parameters]
+    # # CV of 5 different models from each GridSearchCV (5-fold CV)
+    # best_models = joblib.Parallel(n_jobs=OUTER_FOLDS*OUTER_FOLDS)(
+    #     joblib.delayed(cross_val_run)(fold) for fold in outer_folds
+    # )
 
     X_train_resid, X_val_resid = residualize(X,covariates,train_idx=train_idx,test_idx=val_idx)
     X_train_concat, X_val_concat = concatenate(X,covariates,train_idx=train_idx,test_idx=val_idx)
